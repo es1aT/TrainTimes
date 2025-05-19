@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>最寄駅の出発時刻</title>
+  <style>
+    body { font-family: sans-serif; padding: 1em; }
+    h2 { margin-top: 1em; }
+  </style>
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
+</head>
+<body>
+  <h1>最寄駅の出発時刻</h1>
+  <div id="status">位置情報を取得中...</div>
+  <div id="output"></div>
+
+  <script>
+    const statusDiv = document.getElementById('status');
+    const outputDiv = document.getElementById('output');
+
+    function getDirections(stationName, dummyDestination, callback) {
+      const directionsService = new google.maps.DirectionsService();
+      directionsService.route({
+        origin: stationName,
+        destination: dummyDestination,
+        travelMode: google.maps.TravelMode.TRANSIT,
+        transitOptions: {
+          departureTime: new Date()  // now
+        }
+      }, (result, status) => {
+        if (status === 'OK') {
+          const leg = result.routes[0].legs[0];
+          const departure = leg.departure_time?.text || '不明';
+          const destination = leg.end_address || '不明';
+          callback(`→ ${departure} 発（${destination} 行き）`);
+        } else {
+          callback(`→ 経路情報取得に失敗`);
+        }
+      });
+    }
+
+    function searchNearbyStations(location) {
+      const service = new google.maps.places.PlacesService(document.createElement('div'));
+      const request = {
+        location: location,
+        radius: 1500,
+        keyword: '駅',
+        type: ['train_station']
+      };
+
+      service.nearbySearch(request, (results, status) => {
+        if (status !== google.maps.places.PlacesServiceStatus.OK || results.length === 0) {
+          statusDiv.innerText = '最寄駅の取得に失敗しました。';
+          return;
+        }
+
+        statusDiv.innerText = '最寄駅を取得しました。';
+
+        const topStations = results.slice(0, 3);
+        let html = '';
+
+        topStations.forEach((station, index) => {
+          const name = station.name;
+          html += `<h2>${name}</h2>`;
+          html += '<ul>';
+          // 仮の上下方向の目的地（1駅離れればOK）
+          const upDummy = "新宿駅";      // 仮の上り
+          const downDummy = "三鷹駅";     // 仮の下り
+
+          getDirections(name, upDummy, (upResult) => {
+            html += `<li>上り: ${upResult}</li>`;
+            getDirections(name, downDummy, (downResult) => {
+              html += `<li>下り: ${downResult}</li></ul>`;
+              outputDiv.innerHTML = html;
+            });
+          });
+        });
+      });
+    }
+
+    navigator.geolocation.getCurrentPosition((position) => {
+      const userLocation = new google.maps.LatLng(
+        position.coords.latitude,
+        position.coords.longitude
+      );
+      statusDiv.innerText = '最寄駅を検索中...';
+      searchNearbyStations(userLocation);
+    }, () => {
+      statusDiv.innerText = '位置情報の取得に失敗しました。';
+    });
+  </script>
+</body>
+</html>
