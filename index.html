@@ -15,10 +15,11 @@
   <div id="output"></div>
 
   <script>
-    const appid = 'dj00aiZpPXRlY09uSUdhYUs5aCZzPWNvbnN1bWVyc2VjcmV0Jng9NTE-';  // ← あなたのYahoo!アプリIDをここに入れてください
+    const appid = 'dj00aiZpPXRlY09uSUdhYUs5aCZzPWNvbnN1bWVyc2VjcmV0Jng9NTE-'; // ← あなたのappid
     const statusDiv = document.getElementById('status');
     const outputDiv = document.getElementById('output');
 
+    // JSONP用コールバック関数
     function displayStations(data) {
       if (!data.Feature || data.Feature.length === 0) {
         statusDiv.textContent = '⚠️ 駅が見つかりませんでした。';
@@ -26,25 +27,31 @@
       }
 
       statusDiv.textContent = '✅ 最寄駅を取得しました。';
+      outputDiv.innerHTML = ''; // 前の結果を消す
 
       data.Feature.slice(0, 3).forEach(station => {
         const name = station.Name;
-        const dist = station.Property.Distance;
+        const dist = parseFloat(station.Property.Distance || 0).toFixed(1);
         outputDiv.innerHTML += `
           <div class="station">
             <strong>${name}</strong><br>
-            距離：約 ${parseFloat(dist).toFixed(1)} m
+            距離：約 ${dist} m
           </div>
         `;
       });
     }
 
+    // JSONPスクリプト読み込み関数
     function loadJSONP(url, callbackName) {
       const script = document.createElement('script');
       script.src = url + `&callback=${callbackName}`;
+      script.onerror = () => {
+        statusDiv.textContent = '⚠️ データの取得に失敗しました（JSONPエラー）';
+      };
       document.body.appendChild(script);
     }
 
+    // 実行処理
     navigator.geolocation.getCurrentPosition(pos => {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
