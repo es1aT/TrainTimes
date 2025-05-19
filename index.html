@@ -18,8 +18,7 @@
   <div id="output"></div>
 
   <script>
-    const appid = 'dj00aiZpPXRlY09uSUdhYUs5aCZzPWNvbnN1bWVyc2VjcmV0Jng9NTE-'; // ← ここにあなたの appid を入力
-
+    const appid = 'YOUR_APP_ID'; // ← ここをあなたの Yahoo! アプリID に置き換えてください
     const statusDiv = document.getElementById('status');
     const outputDiv = document.getElementById('output');
 
@@ -48,24 +47,64 @@
       return json.TimeTable?.Train?.slice(0, 5) || [];
     }
 
-    navigator.geolocation.getCurrentPosition(async pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
+    function formatTime(datetime) {
+      return datetime?.slice(11, 16) || '';
+    }
+
+    async function showStations(lat, lon) {
       statusDiv.textContent = '🚉 最寄駅を検索中...';
+      try {
+        const stations = await getNearbyStations(lat, lon);
+        if (stations.length === 0) {
+          statusDiv.textContent = '⚠️ 駅が見つかりませんでした。';
+          return;
+        }
+        statusDiv.textContent = '✅ 最寄駅を取得しました。';
 
-      const stations = await getNearbyStations(lat, lon);
-      statusDiv.textContent = '✅ 最寄駅を取得しました。';
+        for (const s of stations) {
+          const name = s.Name;
+          const id = s.Property?.Station?.Id;
+          if (!id) continue;
 
-      for (const s of stations) {
-        const name = s.Name;
-        const id = s.Property.Station.Id;
+          const upList = await getTimetable(id, 1);
+          const downList = await getTimetable(id, 2);
 
-        const upList = await getTimetable(id, 1);
-        const downList = await getTimetable(id, 2);
+          const upHTML = upList.map(t => `<li>${formatTime(t.DepartureState.Datetime)} → ${t.Station.Name}</li>`).join('');
+          const downHTML = downList.map(t => `<li>${formatTime(t.DepartureState.Datetime)} → ${t.Station.Name}</li>`).join('');
 
-        const upHTML = upList.map(t => `<li>${t.DepartureState.Datetime.slice(11,16)} → ${t.Station.Name}</li>`).join('');
-        const downHTML = downList.map(t => `<li>${t.DepartureState.Datetime.slice(11,16)} → ${t.Station.Name}</li>`).join('');
+          outputDiv.innerHTML += `
+            <div class="station">
+              <h2>📍 ${name}</h2>
+              <h3>上り</h3><ul>${upHTML || '<li>情報なし</li>'}</ul>
+              <h3>下り</h3><ul>${downHTML || '<li>情報なし</li>'}</ul>
+            </div>
+          `;
+        }
+      } catch (err) {
+        statusDiv.textContent = '⚠️ 駅情報の取得に失敗しました。';
+        console.error(err);
+      }
+    }
 
-        outputDiv.innerHTML += `
-          <div class="station">
-            <h2>📍
+    // 実行：位置情報取得 or ダミー
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        showStations(lat, lon);
+      },
+      err => {
+        statusDiv.textContent = `⚠️ 位置情報の取得に失敗しました（${err.message}）`;
+        console.error('Geolocation error:', err);
+
+        // 🌐 ダミー位置（東京駅）で続行したい場合は以下を有効に
+        /*
+        const lat = 35.681236;
+        const lon = 139.767125;
+        showStations(lat, lon);
+        */
+      }
+    );
+  </script>
+</body>
+</html>
