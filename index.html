@@ -1,93 +1,71 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <title>最寄駅の出発時刻</title>
+  <meta charset="UTF-8">
+  <title>最寄駅の時刻表</title>
   <style>
-    body { font-family: sans-serif; padding: 1em; }
-    h2 { margin-top: 1em; }
+    body { font-family: sans-serif; padding: 1em; background: #f9f9f9; }
+    h1 { font-size: 1.5em; }
+    h2 { margin-top: 1.2em; }
+    .station { background: #fff; padding: 1em; margin-bottom: 1em; border-radius: 8px; box-shadow: 0 0 5px #ccc; }
+    ul { padding-left: 1.2em; }
+    li { line-height: 1.6; }
   </style>
-  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
 </head>
 <body>
-  <h1>最寄駅の出発時刻</h1>
-  <div id="status">位置情報を取得中...</div>
+  <h1>現在地付近の駅時刻表（上り・下り）</h1>
+  <div id="status">📍 位置情報を取得中...</div>
   <div id="output"></div>
 
   <script>
+    const appid = 'YOUR_APP_ID'; // ← ここにあなたの appid を入力
+
     const statusDiv = document.getElementById('status');
     const outputDiv = document.getElementById('output');
 
-    function getDirections(stationName, dummyDestination, callback) {
-      const directionsService = new google.maps.DirectionsService();
-      directionsService.route({
-        origin: stationName,
-        destination: dummyDestination,
-        travelMode: google.maps.TravelMode.TRANSIT,
-        transitOptions: {
-          departureTime: new Date()  // now
-        }
-      }, (result, status) => {
-        if (status === 'OK') {
-          const leg = result.routes[0].legs[0];
-          const departure = leg.departure_time?.text || '不明';
-          const destination = leg.end_address || '不明';
-          callback(`→ ${departure} 発（${destination} 行き）`);
-        } else {
-          callback(`→ 経路情報取得に失敗`);
-        }
-      });
+    async function getNearbyStations(lat, lon) {
+      const url = `https://map.yahooapis.jp/search/places/V1/localSearch
+        ?appid=${appid}
+        &lat=${lat}
+        &lon=${lon}
+        &dist=2
+        &query=駅
+        &sort=dist
+        &output=json`.replace(/\s+/g, '');
+      const res = await fetch(url);
+      const json = await res.json();
+      return json.Feature.slice(0, 3);
     }
 
-    function searchNearbyStations(location) {
-      const service = new google.maps.places.PlacesService(document.createElement('div'));
-      const request = {
-        location: location,
-        radius: 1500,
-        keyword: '駅',
-        type: ['train_station']
-      };
-
-      service.nearbySearch(request, (results, status) => {
-        if (status !== google.maps.places.PlacesServiceStatus.OK || results.length === 0) {
-          statusDiv.innerText = '最寄駅の取得に失敗しました。';
-          return;
-        }
-
-        statusDiv.innerText = '最寄駅を取得しました。';
-
-        const topStations = results.slice(0, 3);
-        let html = '';
-
-        topStations.forEach((station, index) => {
-          const name = station.name;
-          html += `<h2>${name}</h2>`;
-          html += '<ul>';
-          // 仮の上下方向の目的地（1駅離れればOK）
-          const upDummy = "新宿駅";      // 仮の上り
-          const downDummy = "三鷹駅";     // 仮の下り
-
-          getDirections(name, upDummy, (upResult) => {
-            html += `<li>上り: ${upResult}</li>`;
-            getDirections(name, downDummy, (downResult) => {
-              html += `<li>下り: ${downResult}</li></ul>`;
-              outputDiv.innerHTML = html;
-            });
-          });
-        });
-      });
+    async function getTimetable(stationId, direction) {
+      const url = `https://map.yahooapis.jp/transit/timetable/v2/timetable
+        ?appid=${appid}
+        &station=${stationId}
+        &direction=${direction}
+        &output=json`.replace(/\s+/g, '');
+      const res = await fetch(url);
+      const json = await res.json();
+      return json.TimeTable?.Train?.slice(0, 5) || [];
     }
 
-    navigator.geolocation.getCurrentPosition((position) => {
-      const userLocation = new google.maps.LatLng(
-        position.coords.latitude,
-        position.coords.longitude
-      );
-      statusDiv.innerText = '最寄駅を検索中...';
-      searchNearbyStations(userLocation);
-    }, () => {
-      statusDiv.innerText = '位置情報の取得に失敗しました。';
-    });
-  </script>
-</body>
-</html>
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      statusDiv.textContent = '🚉 最寄駅を検索中...';
+
+      const stations = await getNearbyStations(lat, lon);
+      statusDiv.textContent = '✅ 最寄駅を取得しました。';
+
+      for (const s of stations) {
+        const name = s.Name;
+        const id = s.Property.Station.Id;
+
+        const upList = await getTimetable(id, 1);
+        const downList = await getTimetable(id, 2);
+
+        const upHTML = upList.map(t => `<li>${t.DepartureState.Datetime.slice(11,16)} → ${t.Station.Name}</li>`).join('');
+        const downHTML = downList.map(t => `<li>${t.DepartureState.Datetime.slice(11,16)} → ${t.Station.Name}</li>`).join('');
+
+        outputDiv.innerHTML += `
+          <div class="station">
+            <h2>📍
