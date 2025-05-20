@@ -3,30 +3,158 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>現在地表示テスト</title>
+    <title>最寄駅と経路（出発時刻付き）</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 1em;
+            background: #f9f9f9;
+        }
+
+        h1 {
+            font-size: 1.5em;
+        }
+
+        .station {
+            background: #fff;
+            padding: 1em;
+            margin: 1em 0;
+            border-radius: 8px;
+            box-shadow: 0 0 5px #ccc;
+        }
+
+        .route {
+            font-size: 0.9em;
+            margin-top: 0.5em;
+            padding-top: 0.5em;
+            border-top: 1px solid #ddd;
+        }
+
+        iframe {
+            width: 100%;
+            height: 300px;
+            border: 0;
+            border-radius: 8px;
+            box-shadow: 0 0 5px #ccc;
+            margin-top: 1em;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>📍 現在地</h1>
-    <div id="output">位置情報を取得中...</div>
+    <h1>最寄駅と出発時刻付き経路</h1>
+    <div id="status">📍 位置情報を取得中...</div>
+    <div id="output"></div>
+    <iframe id="mapFrame" loading="lazy" allowfullscreen></iframe>
 
     <script>
-        const output = document.getElementById('output');
+        const WORKER_URL = "https://traintimes.taichies-1.workers.dev"; // ← ここにWorkerのURL
 
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                position => {
-                    const lat = position.coords.latitude.toFixed(6);
-                    const lon = position.coords.longitude.toFixed(6);
-                    output.textContent = `緯度: ${lat} / 経度: ${lon}`;
-                },
-                error => {
-                    output.textContent = `位置情報の取得に失敗しました（${error.message}）`;
-                }
-            );
-        } else {
-            output.textContent = 'このブラウザでは位置情報がサポートされていません。';
+        const outputDiv = document.getElementById('output');
+        const statusDiv = document.getElementById('status');
+        const mapFrame = document.getElementById('mapFrame');
+
+        function haversine(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const toRad = deg => deg * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
+
+        async function fetchRouteViaWorker(fromLat, fromLon, toName) {
+            const url = `${WORKER_URL}?origin=${fromLat},${fromLon}&destination=${encodeURIComponent(toName + "駅")}`;
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Worker API error');
+                const data = await res.json();
+                const steps = data.routes?.[0]?.legs?.[0]?.steps || [];
+                const details = steps.map(s => {
+                    const dep = s.transit_details?.departure_time?.text || '';
+                    const arr = s.transit_details?.arrival_time?.text || '';
+                    const line = s.transit_details?.line?.short_name || '';
+                    const instr = s.html_instructions?.replace(/<[^>]*>/g, '') || '';
+                    return `🚇 ${line ? line + '：' : ''}${instr}（🕒${dep} → 🕘${arr}）`;
+                });
+                return details.join('<br>') || '📝 経路情報が見つかりません';
+            } catch (e) {
+                return '❌ 経路取得に失敗しました';
+            }
+        }
+
+        async function searchStations(lat, lon, radius = 100) {
+            statusDiv.textContent = `🚉 駅検索中（半径: ${radius}m）`;
+
+            const query = `
+        [out:json];
+        node(around:${radius},${lat},${lon})["railway"="station"];
+        out body;
+      `.trim();
+
+            const res = await fetch('https://overpass-api.de/api/interpreter', {
+                method: 'POST',
+                body: query,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+
+            if (!res.ok) {
+                statusDiv.textContent = '❌ 駅検索に失敗しました';
+                return;
+            }
+
+            const data = await res.json();
+            let stations = data.elements.map(e => {
+                const dist = haversine(lat, lon, e.lat, e.lon);
+                return {
+                    name: e.tags.name || '名称不明',
+                    lat: e.lat,
+                    lon: e.lon,
+                    distance: dist
+                };
+            });
+
+            stations.sort((a, b) => a.distance - b.distance);
+
+            if (stations.length >= 3 || radius >= 5000) {
+                stations = stations.slice(0, 3);
+                outputDiv.innerHTML = '';
+                for (const station of stations) {
+                    outputDiv.innerHTML += `
+            <div class="station" id="station-${station.name}">
+              <strong>${station.name}</strong><br>
+              距離：約 ${station.distance.toFixed(1)} m
+              <div class="route">⏳ 経路情報を取得中...</div>
+            </div>
+          `;
+                }
+
+                statusDiv.textContent = '✅ 最寄駅を表示しました。';
+
+                for (const station of stations) {
+                    const route = await fetchRouteViaWorker(lat, lon, station.name);
+                    const routeDiv = document.querySelector(`#station-${station.name} .route`);
+                    if (routeDiv) {
+                        routeDiv.innerHTML = route;
+                    }
+                }
+            } else {
+                searchStations(lat, lon, radius + 100);
+            }
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            pos => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                mapFrame.src = `https://www.google.com/maps?q=${lat},${lon}&z=15&output=embed`;
+                searchStations(lat, lon);
+            },
+            err => {
+                statusDiv.textContent = `⚠️ 位置情報の取得に失敗しました（${err.message}）`;
+            }
+        );
     </script>
 </body>
 
